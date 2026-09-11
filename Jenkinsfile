@@ -32,6 +32,12 @@ pipeline {
                 '''
             }
         }
+      stage('Verify Deployment') {
+    steps {
+        echo 'Verifying deployed file matches source...'
+        sh 'diff index.html $DEPLOY_DIR/index.html'
+    }
+}
     }
 
     post {
