@@ -51,7 +51,7 @@ pipeline {
 
 stage('Health Check') {
     steps {
-        sh 'curl -f http://localhost:8000/index.html'
+        sh 'curl -f http://localhost:8000/index.tml'
     }
 }
     }
