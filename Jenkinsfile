@@ -38,20 +38,41 @@ pipeline {
         sh 'diff index.html $DEPLOY_DIR/index.html'
     }
 }
-    }
-
-    post {
-        success {
-            echo 'Pipeline succeeded. Serve the deployed file locally with:'
-            echo "cd ${DEPLOY_DIR} && python3 -m http.server 8000"
-            echo 'Then open http://localhost:8000 in your browser.'
-        }
-        failure {
-            echo 'Pipeline failed. Check the stage logs above to see which step broke.'
-        }
+        stage('Serve Locally') {
+    steps {
+        sh '''
+            cd $DEPLOY_DIR
+            nohup python3 -m http.server 8000 > /tmp/http_server.log 2>&1 &
+            echo $! > /tmp/http_server.pid
+            sleep 2
+        '''
     }
 }
 
+stage('Health Check') {
+    steps {
+        sh 'curl -f http://localhost:8000/index.html'
+    }
+}
+    }
+
+   post {
+    always {
+        sh '''
+            if [ -f /tmp/http_server.pid ]; then
+                kill $(cat /tmp/http_server.pid) || true
+                rm -f /tmp/http_server.pid
+            fi
+        '''
+    }
+    success {
+        echo 'Pipeline succeeded — deployed file verified reachable.'
+    }
+    failure {
+        echo 'Pipeline failed. Check the stage logs above to see which step broke.'
+    }
+}
+}
 /*
 LATER — swap the "Deploy (Local)" stage for this once you have sandbox SSH access:
 
