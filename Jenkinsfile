@@ -19,7 +19,7 @@ pipeline {
         stage('Verify File Exists') {
             steps {
                 echo 'Confirming index.html is present before deploy...'
-                sh 'test -f index.tml'
+                sh 'test -f index.html'
             }
         }
 
