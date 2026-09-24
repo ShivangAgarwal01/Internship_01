@@ -60,7 +60,7 @@ stage('Health Check') {
     always {
         sh '''
             if [ -f /tmp/http_server.pid ]; then
-               /* kill $(cat /tmp/http_server.pid) || true */
+               # kill $(cat /tmp/http_server.pid) || true 
                 rm -f /tmp/http_server.pid
             fi
         '''
