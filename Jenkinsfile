@@ -38,11 +38,11 @@ pipeline {
         sh 'diff index.html $DEPLOY_DIR/index.html'
     }
 }
-        stage('Serve Locally') {
+       stage('Serve Locally') {
     steps {
         sh '''
             cd $DEPLOY_DIR
-            nohup python3 -m http.server 8000 > /tmp/http_server.log 2>&1 &
+            setsid nohup python3 -m http.server 8000 > /tmp/http_server.log 2>&1 < /dev/null &
             echo $! > /tmp/http_server.pid
             sleep 2
         '''
