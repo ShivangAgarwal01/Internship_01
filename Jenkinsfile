@@ -23,15 +23,15 @@ pipeline {
             }
         }
 
-        stage('Deploy (Local)') {
-            steps {
-                echo "Deploying index.html to ${DEPLOY_DIR}..."
-                sh '''
-                    mkdir -p $DEPLOY_DIR
-                    cp index.html $DEPLOY_DIR/index.html
-                '''
-            }
+        stage('Deploy (Sandbox)') {
+    steps {
+        sshagent(credentials: ['sandbox-ssh-key']) {
+            sh '''
+                scp -o StrictHostKeyChecking=no index.html user@SANDBOX_IP:/path/to/webroot/index.html
+            '''
         }
+    }
+}
       stage('Verify Deployment') {
     steps {
         echo 'Verifying deployed file matches source...'
