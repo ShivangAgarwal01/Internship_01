@@ -1,12 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        // LOCAL TEST: deploy to a folder on this machine, served by python http.server
-        // LATER: change this to the sandbox path once SSH access is available
-        DEPLOY_DIR = '/tmp/pipeline-test-deploy'
-    }
-
     stages {
 
         stage('Checkout') {
@@ -24,68 +18,43 @@ pipeline {
         }
 
         stage('Deploy (Sandbox)') {
-    steps {
-        sshagent(credentials: ['sandbox-ssh-key']) {
-            sh '''
-                scp -o StrictHostKeyChecking=no index.html user@SANDBOX_IP:/path/to/webroot/index.html
-            '''
+            steps {
+                sshagent(credentials: ['jenkins-bizkarm-deploy-key']) {
+                    sh '''
+                        scp -o StrictHostKeyChecking=no index.html \
+                            prodcomtech@62.72.13.94:/var/www/html/bizkarm/pipeline-test/index.html
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                echo 'Verifying deployed file matches source...'
+                sshagent(credentials: ['jenkins-bizkarm-deploy-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no prodcomtech@62.72.13.94 \
+                            "cat /var/www/html/bizkarm/pipeline-test/index.html" > /tmp/remote_index.html
+                        diff index.html /tmp/remote_index.html
+                    '''
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh 'curl -sk https://sandbox.bizkarm.in:442/pipeline-test/index.html -H "Host: sandbox.bizkarm.in" -f'
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo 'Pipeline succeeded — deployed file verified reachable.'
+        }
+        failure {
+            echo 'Pipeline failed. Check the stage logs above to see which step broke.'
         }
     }
 }
-      stage('Verify Deployment') {
-    steps {
-        echo 'Verifying deployed file matches source...'
-        sh 'diff index.html $DEPLOY_DIR/index.html'
-    }
-}
-       stage('Serve Locally') {
-    steps {
-        sh '''
-            cd $DEPLOY_DIR
-            setsid nohup python3 -m http.server 8000 > /tmp/http_server.log 2>&1 < /dev/null &
-            echo $! > /tmp/http_server.pid
-            sleep 2
-        '''
-    }
-}
-
-stage('Health Check') {
-    steps {
-        sh 'curl -f http://localhost:8000/index.html'
-    }
-}
-    }
-
-   post {
-    always {
-        sh '''
-            if [ -f /tmp/http_server.pid ]; then
-                kill $(cat /tmp/http_server.pid) || true 
-                rm -f /tmp/http_server.pid
-            fi
-        '''
-    }
-    success {
-        echo 'Pipeline succeeded — deployed file verified reachable.'
-    }
-    failure {
-        echo 'Pipeline failed. Check the stage logs above to see which step broke.'
-    }
-}
-}
-/*
-LATER — swap the "Deploy (Local)" stage for this once you have sandbox SSH access:
-
-stage('Deploy (Sandbox)') {
-    steps {
-        sshagent(credentials: ['sandbox-ssh-key']) {
-            sh '''
-                scp -o StrictHostKeyChecking=no index.html user@SANDBOX_IP:/path/to/webroot/index.html
-            '''
-        }
-    }
-}
-
-Everything else in the pipeline (Checkout, Verify File Exists) stays exactly the same.
-Only the deploy target changes — that's the whole point of testing locally first.
-*/
