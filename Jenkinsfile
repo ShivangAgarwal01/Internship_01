@@ -19,10 +19,21 @@ pipeline {
 
         stage('Deploy (Sandbox)') {
             steps {
-                sshagent(credentials: ['jenkins-bizkarm-deploy-key']) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-bizkarm-deploy-key',
+                                                   keyFileVariable: 'SSH_KEY',
+                                                   usernameVariable: 'SSH_USER')]) {
                     sh '''
-                        scp -o StrictHostKeyChecking=no index.html \
-                            prodcomtech@62.72.13.94:/var/www/html/bizkarm/pipeline-test/index.html
+                        # Copy the key to container-native /tmp with owner-only permissions (600).
+                        # The Jenkins workspace is on a Windows-mounted drive that cannot hold real permissions.
+                        install -m 600 "$SSH_KEY" /tmp/jenkins_deploy_key
+                        trap 'rm -f /tmp/jenkins_deploy_key' EXIT
+
+                        scp -i /tmp/jenkins_deploy_key \
+                            -o IdentitiesOnly=yes \
+                            -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null \
+                            index.html \
+                            "$SSH_USER"@62.72.13.94:/var/www/html/bizkarm/pipeline-test/index.html
                     '''
                 }
             }
@@ -31,10 +42,20 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 echo 'Verifying deployed file matches source...'
-                sshagent(credentials: ['jenkins-bizkarm-deploy-key']) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-bizkarm-deploy-key',
+                                                   keyFileVariable: 'SSH_KEY',
+                                                   usernameVariable: 'SSH_USER')]) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no prodcomtech@62.72.13.94 \
+                        install -m 600 "$SSH_KEY" /tmp/jenkins_deploy_key
+                        trap 'rm -f /tmp/jenkins_deploy_key' EXIT
+
+                        ssh -i /tmp/jenkins_deploy_key \
+                            -o IdentitiesOnly=yes \
+                            -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null \
+                            "$SSH_USER"@62.72.13.94 \
                             "cat /var/www/html/bizkarm/pipeline-test/index.html" > /tmp/remote_index.html
+
                         diff index.html /tmp/remote_index.html
                     '''
                 }
@@ -43,7 +64,8 @@ pipeline {
 
         stage('Health Check') {
             steps {
-                sh 'curl -sk https://sandbox.bizkarm.in:442/pipeline-test/index.html -H "Host: sandbox.bizkarm.in" -f'
+                // -k skips cert validation: port 442 currently serves an expired cert (known issue).
+                sh 'curl -sk -f https://sandbox.bizkarm.in:442/pipeline-test/index.html'
             }
         }
 
