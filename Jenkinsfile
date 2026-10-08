@@ -41,7 +41,7 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                 'Verifying deployed file matches source...'
+                echo 'Verifying deployed file matches source...'
                 withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-bizkarm-deploy-key',
                                                    keyFileVariable: 'SSH_KEY',
                                                    usernameVariable: 'SSH_USER')]) {
