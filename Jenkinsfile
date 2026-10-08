@@ -1,12 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        // LOCAL TEST: deploy to a folder on this machine, served by python http.server
-        // LATER: change this to the sandbox path once SSH access is available
-        DEPLOY_DIR = '/tmp/pipeline-test-deploy'
-    }
-
     stages {
 
         stage('Checkout') {
@@ -23,42 +17,66 @@ pipeline {
             }
         }
 
-        stage('Deploy (Local)') {
+        stage('Deploy (Sandbox)') {
             steps {
-                echo "Deploying index.html to ${DEPLOY_DIR}..."
-                sh '''
-                    mkdir -p $DEPLOY_DIR
-                    cp index.html $DEPLOY_DIR/index.html
-                '''
+                withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-bizkarm-deploy-key',
+                                                   keyFileVariable: 'SSH_KEY',
+                                                   usernameVariable: 'SSH_USER')]) {
+                    sh '''
+                        # Copy the key to container-native /tmp with owner-only permissions (600).
+                        # The Jenkins workspace is on a Windows-mounted drive that cannot hold real permissions.
+                        install -m 600 "$SSH_KEY" /tmp/jenkins_deploy_key
+                        trap 'rm -f /tmp/jenkins_deploy_key' EXIT
+
+                        scp -i /tmp/jenkins_deploy_key \
+                            -o IdentitiesOnly=yes \
+                            -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null \
+                            index.html \
+                            "$SSH_USER"@62.72.13.94:/var/www/html/bizkarm/pipeline-test/index.html
+                    '''
+                }
             }
         }
+
+        stage('Verify Deployment') {
+            steps {
+                echo 'Verifying deployed file matches source...'
+                withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-bizkarm-deploy-key',
+                                                   keyFileVariable: 'SSH_KEY',
+                                                   usernameVariable: 'SSH_USER')]) {
+                    sh '''
+                        install -m 600 "$SSH_KEY" /tmp/jenkins_deploy_key
+                        trap 'rm -f /tmp/jenkins_deploy_key' EXIT
+
+                        ssh -i /tmp/jenkins_deploy_key \
+                            -o IdentitiesOnly=yes \
+                            -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null \
+                            "$SSH_USER"@62.72.13.94 \
+                            "cat /var/www/html/bizkarm/pipeline-test/index.html" > /tmp/remote_index.html
+
+                        diff index.html /tmp/remote_index.html
+                    '''
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                // -k skips cert validation: port 442 currently serves an expired cert (known issue).
+                sh 'curl -sk -f https://sandbox.bizkarm.in:442/pipeline-test/index.html'
+            }
+        }
+
     }
 
     post {
         success {
-            echo 'Pipeline succeeded. Serve the deployed file locally with:'
-            echo "cd ${DEPLOY_DIR} && python3 -m http.server 8000"
-            echo 'Then open http://localhost:8000 in your browser.'
+            echo 'Pipeline succeeded — deployed file verified reachable.'
         }
         failure {
             echo 'Pipeline failed. Check the stage logs above to see which step broke.'
         }
     }
 }
-
-/*
-LATER — swap the "Deploy (Local)" stage for this once you have sandbox SSH access:
-
-stage('Deploy (Sandbox)') {
-    steps {
-        sshagent(credentials: ['sandbox-ssh-key']) {
-            sh '''
-                scp -o StrictHostKeyChecking=no index.html user@SANDBOX_IP:/path/to/webroot/index.html
-            '''
-        }
-    }
-}
-
-Everything else in the pipeline (Checkout, Verify File Exists) stays exactly the same.
-Only the deploy target changes — that's the whole point of testing locally first.
-*/
