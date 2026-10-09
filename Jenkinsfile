@@ -1,6 +1,9 @@
 // ============================================================================
 // sandbox-pipeline-test: deploys index.html to the BizKarm sandbox server
 //
+// Target: a folder in prodcomtech's home directory, SEPARATE from the live
+// BizKarm app (/var/www/html/bizkarm). Nothing here writes into the live app.
+//
 // Flow:  Checkout -> Verify File Exists -> Deploy -> Verify Deployment -> Health Check
 //
 // How failure works: every stage runs shell commands. A command that exits with
@@ -11,6 +14,10 @@
 // every minute whether main has a new commit. There is no webhook because GitHub
 // cannot reach Jenkins running on localhost.
 //
+// No URL yet: Apache only serves folders it has been told about. Until a URL exists
+// for this folder, HEALTH_URL stays empty and the Health Check stage is skipped.
+// The Verify Deployment stage still proves the file on the server matches the repo.
+//
 // Known shortcuts (acceptable for a static test page, close before real services):
 //   - StrictHostKeyChecking=no : the server's identity is not verified
 //   - curl -k                  : the HTTPS certificate is not validated
@@ -18,6 +25,17 @@
 pipeline {
     // Run on any available agent. Here that is the Jenkins container itself.
     agent any
+
+    environment {
+        // Where the page lives on the server. The folder must already exist:
+        // scp does not create directories. prodcomtech owns its home folder,
+        // so no sudo and no chown are needed here.
+        DEPLOY_DIR = '/home/prodcomtech/bizkarm-test'
+
+        // Fill this in once Lalan decides how the folder gets a URL.
+        // While it is empty, the Health Check stage is skipped.
+        HEALTH_URL = ''
+    }
 
     // Stages run top to bottom. The first failure stops the run.
     stages {
@@ -42,7 +60,6 @@ pipeline {
         }
 
         // Copies index.html to the server over SSH. This does not use Webuzo at all.
-        // It writes straight into the folder Apache serves for sandbox.bizkarm.in.
         stage('Deploy (Sandbox)') {
             steps {
                 // Loads the Jenkins credential into two variables, only inside this block:
@@ -68,14 +85,14 @@ pipeline {
                         #   IdentitiesOnly=yes            use only that key, ignore any others
                         #   StrictHostKeyChecking=no      do not ask to confirm the server (nobody can answer a prompt)
                         #   UserKnownHostsFile=/dev/null  do not remember the server's fingerprint
-                        # Destination format is user@host:path. The path is the real Apache
-                        # document root, plus the pipeline-test subfolder, so the live site is untouched.
+                        # Destination format is user@host:path. DEPLOY_DIR comes from the
+                        # environment block above.
                         scp -i /tmp/jenkins_deploy_key \
                             -o IdentitiesOnly=yes \
                             -o StrictHostKeyChecking=no \
                             -o UserKnownHostsFile=/dev/null \
                             index.html \
-                            "$SSH_USER"@62.72.13.94:/var/www/html/bizkarm/pipeline-test/index.html
+                            "$SSH_USER"@62.72.13.94:"$DEPLOY_DIR"/index.html
                     '''
                 }
             }
@@ -101,7 +118,7 @@ pipeline {
                             -o StrictHostKeyChecking=no \
                             -o UserKnownHostsFile=/dev/null \
                             "$SSH_USER"@62.72.13.94 \
-                            "cat /var/www/html/bizkarm/pipeline-test/index.html" > /tmp/remote_index.html
+                            "cat $DEPLOY_DIR/index.html" > /tmp/remote_index.html
 
                         # diff exits 0 if the files are identical and 1 if they differ,
                         # so any mismatch fails the build. Printing nothing means identical.
@@ -111,13 +128,17 @@ pipeline {
             }
         }
 
-        // Fetches the live URL. -f makes curl exit non-zero on HTTP errors like 404 or 500.
+        // Fetches the URL. -f makes curl exit non-zero on HTTP errors like 404 or 500.
         // This proves the URL answers. It does not prove the content is fresh, because
         // the Verify Deployment stage does that.
+        // The when block skips the stage while HEALTH_URL is empty (no URL exists yet).
         stage('Health Check') {
+            when {
+                expression { return (env.HEALTH_URL ?: '') != '' }
+            }
             steps {
-                // -k skips cert validation: port 442 currently serves an expired cert (known issue).
-                sh 'curl -sk -f https://sandbox.bizkarm.in:442/pipeline-test/index.html'
+                // -k skips cert validation, needed while the target URL has a bad certificate.
+                sh 'curl -sk -f "$HEALTH_URL"'
             }
         }
 
@@ -127,7 +148,7 @@ pipeline {
     // and prints a message based on the result.
     post {
         success {
-            echo 'Pipeline succeeded — deployed file verified reachable.'
+            echo 'Pipeline succeeded — deployed file matches the repo copy.'
         }
         failure {
             echo 'Pipeline failed. Check the stage logs above to see which step broke.'
